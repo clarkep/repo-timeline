@@ -1,13 +1,25 @@
 #!/usr/bin/env python3
 import sys
+import os
 import subprocess 
 import re
+import argparse
+import pdb
 
-DEPTH = 8
+STORE_DIR = ".timelines"
+
+DEFAULT_DEPTH = 100 
 REMOVE_DASH = 1 
 REMOVE_RC = 1 
-PRINT_REMOVED = 0 
 ANY_NUMBERS = 1
+
+PRINT_REMOVED = 0
+
+outfile = None
+
+def get_store_directory():
+    home = os.environ['HOME']
+    return os.path.join(home, STORE_DIR)
 
 def all_zeros(version_list):
     all_zeros = True
@@ -16,42 +28,90 @@ def all_zeros(version_list):
             all_zeros=False
     return all_zeros
 
-#os.system("cd {}".format(sys.argv[1]))
-if len(sys.argv) > 1:
-    complete_proc = subprocess.run('cd {} && git log --tags --simplify-by-decoration --pretty="format:%as  %D" | grep tag | sort'.format(sys.argv[1]), shell=True, capture_output=True)
-else: 
-    complete_proc = subprocess.run('git log --tags --simplify-by-decoration --pretty="format:%as  %D" | grep tag | sort', shell=True, capture_output=True)
+def print_removed(*args, **kwargs):
+    if PRINT_REMOVED:
+        print('    ', *args, **kwargs)
 
-tags = []
-output = complete_proc.stdout.decode()
-#print(output)
-for line in output.split(sep='\n')[:-1]:
-    selected = False
-    sp = line.split()
-    date, tag_name = sp[0], sp[2]
-    tag_name = tag_name.replace(',', '')
-    if ANY_NUMBERS:
-        pattern = '\d(\.\d)*'
-    else:
-        pattern = '\d(\.\d)+'
-    match_obj = re.search(pattern, tag_name)
-    if match_obj:
-        match = match_obj[0]
-    else:
-        if PRINT_REMOVED:
-            print('    ', date, tag_name)
-        continue
-    if tag_name.rfind('-')>match_obj.start(0) and REMOVE_DASH:
-        if PRINT_REMOVED:
-            print('    ', date, tag_name)
-        continue
-    if tag_name.rfind('rc')!=-1 and REMOVE_RC:
-        if PRINT_REMOVED:
-            print('    ', date, tag_name)
-        continue
-    version_splits = match.split('.')
-    if len(version_splits) == DEPTH or all_zeros(version_splits[DEPTH:]):
-        selected = True
-        print(date, tag_name)
-    elif PRINT_REMOVED:
-         print('    ', date, tag_name)
+def print_normal(*args, **kwargs):
+    print(*args, **kwargs)
+    if outfile:
+        print(*args, **kwargs, file=outfile, flush=True)
+    
+
+def process_line(line, depth, include_pattern, exclude_pattern, options):
+        #pdb.set_trace()
+        if options['show_all']:
+            global PRINT_REMOVED
+            PRINT_REMOVED = 1
+        selected = False
+        sp = line.split()
+        date, tag_name = sp[0], sp[2]
+        tag_name = tag_name.replace(',', '')
+        if ANY_NUMBERS:
+            pattern = "\d+(\.\d+)*"
+        else:
+            pattern = "\d+(\.\d+)+"
+        match_obj = re.search(pattern, tag_name)
+        if exclude_pattern:
+            match_obj_ex = re.search(exclude_pattern, tag_name)
+        else:
+            match_obj_ex = None
+        if include_pattern:
+            match_obj_inc = re.search(include_pattern, tag_name)
+        else:
+            match_obj_inc = 1
+
+        if match_obj and match_obj_inc and not match_obj_ex:
+            match = match_obj[0]
+        else:
+            print_removed(date, tag_name)
+            return 
+        if tag_name.rfind('-')>match_obj.start(0) and not options['allow_dashes']:
+            print_removed(date, tag_name)
+            return
+        if tag_name.rfind('rc')!=-1 and not options['allow_rc']:
+            print_removed(date, tag_name)
+            return
+        version_splits = match.split('.')
+        if len(version_splits) == depth or all_zeros(version_splits[depth:]):
+            selected = True
+            print(date, tag_name)
+        else:
+            print_removed(date, tag_name)
+
+# dirname: if None, use current directory.
+def get_tl(depth, dirname, include_pattern, exclude_pattern, options):
+#    pdb.set_trace()
+    if dirname: 
+        cmd = 'cd {} && git log --tags --simplify-by-decoration --pretty="format:%as  %D" | grep tag | sort'
+        complete_proc = subprocess.run(cmd.format(dirname), shell=True, capture_output=True)
+    else: 
+        cmd = 'git log --tags --simplify-by-decoration --pretty="format:%as  %D" | grep tag | sort'
+        complete_proc = subprocess.run(cmd, shell=True, capture_output=True)
+    tags = []
+    output = complete_proc.stdout.decode()
+    #print(output)
+    for line in output.split(sep="\n")[:-1]:
+        process_line(line, depth, include_pattern, exclude_pattern, options)
+
+def main():
+    parser = argparse.ArgumentParser(description="Create a version timeline from the tags in a git repository.")
+    parser.add_argument("dir", nargs="?", default=None, help="the git repository to use")
+    parser.add_argument("-d", "--depth", type=int, default=DEFAULT_DEPTH,
+                        help="hide sub-versions deeper than DEPTH")
+    parser.add_argument("-i", "--include", default=None, help="pattern to include in the results")
+    parser.add_argument("-e", "--exclude", default=None, help="pattern to exclude from the results")
+    parser.add_argument("--allow-dashes", default=False, help="allow dashes after version number(normally excluded)")
+    parser.add_argument("--allow-rc", default=False, help="allow 'rc' after version number(normally-excluded)")
+    parser.add_argument("-s", "--show-all", action="store_true", help="list all tags in the repository")
+    parser.add_argument("-w", "--write", action="store_true", help="write the timeline to a searchable archive")
+    args = parser.parse_args()
+    options = {'allow_dashes': args.allow_dashes,
+               'allow_rc': args.allow_rc,
+               'show_all': args.show_all,
+               'write': args.write} 
+               
+    get_tl(args.depth, args.dir, args.include, args.exclude, options)
+
+if __name__=="__main__":
+    main()
