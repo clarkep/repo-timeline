@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+import sys
+import subprocess 
+import re
+
+DEPTH = 8
+REMOVE_DASH = 1 
+REMOVE_RC = 1 
+PRINT_REMOVED = 0 
+ANY_NUMBERS = 1
+
+def all_zeros(version_list):
+    all_zeros = True
+    for ver in version_list:
+        if ver != '0':
+            all_zeros=False
+    return all_zeros
+
+#os.system("cd {}".format(sys.argv[1]))
+if len(sys.argv) > 1:
+    complete_proc = subprocess.run('cd {} && git log --tags --simplify-by-decoration --pretty="format:%as  %D" | grep tag | sort'.format(sys.argv[1]), shell=True, capture_output=True)
+else: 
+    complete_proc = subprocess.run('git log --tags --simplify-by-decoration --pretty="format:%as  %D" | grep tag | sort', shell=True, capture_output=True)
+
+tags = []
+output = complete_proc.stdout.decode()
+#print(output)
+for line in output.split(sep='\n')[:-1]:
+    selected = False
+    sp = line.split()
+    date, tag_name = sp[0], sp[2]
+    tag_name = tag_name.replace(',', '')
+    if ANY_NUMBERS:
+        pattern = '\d(\.\d)*'
+    else:
+        pattern = '\d(\.\d)+'
+    match_obj = re.search(pattern, tag_name)
+    if match_obj:
+        match = match_obj[0]
+    else:
+        if PRINT_REMOVED:
+            print('    ', date, tag_name)
+        continue
+    if tag_name.rfind('-')>match_obj.start(0) and REMOVE_DASH:
+        if PRINT_REMOVED:
+            print('    ', date, tag_name)
+        continue
+    if tag_name.rfind('rc')!=-1 and REMOVE_RC:
+        if PRINT_REMOVED:
+            print('    ', date, tag_name)
+        continue
+    version_splits = match.split('.')
+    if len(version_splits) == DEPTH or all_zeros(version_splits[DEPTH:]):
+        selected = True
+        print(date, tag_name)
+    elif PRINT_REMOVED:
+         print('    ', date, tag_name)
